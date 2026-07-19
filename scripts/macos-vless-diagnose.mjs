@@ -122,7 +122,7 @@ function parseVlessLink(raw) {
     const q = url.searchParams;
     const network = q.get('type') || q.get('network') || 'tcp';
     const security = q.get('security') || 'none';
-    const userId = decodeURIComponent(url.username || '');
+    const userId = safeDecode(url.username || '');
     const address = url.hostname;
     const port = Number(url.port || '443');
 
@@ -134,7 +134,7 @@ function parseVlessLink(raw) {
         address,
         encryption: q.get('encryption') || 'none',
         flow: q.get('flow') || '',
-        fragment: decodeURIComponent(url.hash.slice(1) || ''),
+        fragment: safeDecode(url.hash.slice(1) || ''),
         headerType: q.get('headerType') || q.get('header') || '',
         host: q.get('host') || q.get('authority') || '',
         network,
@@ -365,6 +365,9 @@ async function activeProxyChecks(xray, configPath, httpPort, urls, timeout, asse
         for (const url of urls) {
             await httpProxyFetch(url, httpPort, timeout, reporter);
         }
+        for (const url of urls) {
+            await curlProxyFetch(url, httpPort, timeout, reporter);
+        }
     } catch (error) {
         await reporter.result('fail', 'Active Xray proxy check failed', error.message);
     } finally {
@@ -439,10 +442,43 @@ async function httpProxyFetch(rawUrl, proxyPort, timeout, reporter) {
         await onceSecure(secure, timeout);
         secure.write(`GET ${url.pathname || '/'}${url.search} HTTP/1.1\r\nHost: ${url.hostname}\r\nConnection: close\r\n\r\n`);
         const response = await readUntilClose(secure, timeout);
-        await reporter.result('pass', 'Proxy HTTPS request succeeded', `${rawUrl} -> ${response.split('\r\n')[0] || 'no status'} in ${Date.now() - started}ms`);
+        await reporter.result('pass', 'Node proxy HTTPS request succeeded', `${rawUrl} -> ${response.split('\r\n')[0] || 'no status'} in ${Date.now() - started}ms`);
     } catch (error) {
         if (socket) socket.destroy();
-        await reporter.result('fail', 'Proxy HTTPS request failed', `${rawUrl}: ${error.message}`);
+        await reporter.result('fail', 'Node proxy HTTPS request failed', `${rawUrl}: ${error.message}`);
+    }
+}
+
+async function curlProxyFetch(rawUrl, proxyPort, timeout, reporter) {
+    const started = Date.now();
+    const timeoutSeconds = Math.max(1, Math.ceil(timeout / 1000));
+    const proc = await runProcess(
+        '/usr/bin/curl',
+        [
+            '-sS',
+            '--http1.1',
+            '--proxy',
+            `http://127.0.0.1:${proxyPort}`,
+            '--max-time',
+            String(timeoutSeconds),
+            '-o',
+            '/dev/null',
+            '-w',
+            'http_code=%{http_code} remote_ip=%{remote_ip} time_total=%{time_total}',
+            rawUrl,
+        ],
+        timeout + 1500,
+    ).catch((error) => ({
+        code: -1,
+        stderr: error.message,
+        stdout: '',
+    }));
+
+    const output = summarizeOutput(proc.stdout, proc.stderr);
+    if (proc.code === 0 && /http_code=(2|3)\d\d/.test(proc.stdout)) {
+        await reporter.result('pass', 'curl proxy HTTPS request succeeded', `${rawUrl} -> ${output} in ${Date.now() - started}ms`);
+    } else {
+        await reporter.result('fail', `curl proxy HTTPS request failed with code ${proc.code}`, `${rawUrl}: ${output}`);
     }
 }
 
@@ -653,6 +689,14 @@ function mask(value) {
     const text = String(value || '');
     if (text.length <= 10) return text || 'missing';
     return `${text.slice(0, 5)}...${text.slice(-5)}`;
+}
+
+function safeDecode(value) {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return String(value || '');
+    }
 }
 
 function delay(ms) {
