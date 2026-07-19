@@ -13,11 +13,12 @@ const (
 	AssetLocation   = "xray.location.asset"
 	CertLocation    = "xray.location.cert"
 
-	UseReadV         = "xray.buf.readv"
-	UseFreedomSplice = "xray.buf.splice"
-	UseVmessPadding  = "xray.vmess.padding"
-	UseCone          = "xray.cone.disabled"
-	UseStrictJSON    = "xray.json.strict"
+	UseReadV                 = "xray.buf.readv"
+	UseFreedomSplice         = "xray.buf.splice"
+	UseVmessPadding          = "xray.vmess.padding"
+	UseVlessVisionDirectCopy = "xray.vless.vision.direct_copy"
+	UseCone                  = "xray.cone.disabled"
+	UseStrictJSON            = "xray.json.strict"
 
 	BufferSize           = "xray.ray.buffer.size"
 	BrowserDialerAddress = "xray.browser.dialer"
