@@ -92,3 +92,18 @@ Direct-copy is faster, but after the first TLS records it turns Vision traffic i
 a long raw TCP copy path. Some DPI deployments allow the REALITY handshake and then
 kill sustained video-like streams. Disabling direct-copy keeps Vision on its padded
 copy path for the whole connection. Client links do not need to change.
+
+## REALITY Handshake Burst Limiter
+
+For client-side networks that freeze after several fresh REALITY handshakes to the
+same server/SNI, this fork can pace handshakes with:
+
+```text
+XRAY_REALITY_HANDSHAKE_MAX_PER_WINDOW=3
+XRAY_REALITY_HANDSHAKE_WINDOW_MS=60000
+XRAY_REALITY_HANDSHAKE_MIN_INTERVAL_MS=0
+```
+
+The limiter is off by default. It only changes timing before new TCP REALITY dials;
+links and server config stay the same. Use it to test whether failures are caused
+by burst fingerprinting rather than server-side throughput.
