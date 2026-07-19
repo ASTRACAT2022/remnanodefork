@@ -18,6 +18,8 @@ const DEFAULT_LOAD_URLS = [
     'https://speed.cloudflare.com/__down?bytes=50000000',
 ];
 
+const CLOUDFLARE_LOAD_URL = 'https://speed.cloudflare.com/__down?bytes=';
+
 const SUPPORTED_FINGERPRINTS = new Set([
     'chrome',
     'chrome_auto',
@@ -54,6 +56,7 @@ Options:
   --url <url>        HTTPS URL to test through proxy. Can repeat
   --timeout <ms>     Timeout per check. Default: 8000
   --load-test        Download larger HTTPS objects through Xray to reproduce video-like drops
+  --load-bytes <n>   Cloudflare load size. Supports plain bytes, 500m, 1g, 1gb, 1gib
   --load-url <url>   Load-test URL. Can repeat. Default: Cloudflare 50MB test object
   --load-time <sec>  Max seconds per load-test URL. Default: 45
   --report-dir <dir> Directory for logs/report. Default: ~/Desktop/xray-vless-diagnostics-<time>
@@ -92,6 +95,9 @@ function parseArgs(argv) {
             args.timeout = Number(argv[++i]);
         } else if (arg === '--load-test') {
             args.loadTest = true;
+        } else if (arg === '--load-bytes') {
+            args.loadTest = true;
+            args.loadUrls.push(`${CLOUDFLARE_LOAD_URL}${parseByteSize(argv[++i] || '')}`);
         } else if (arg === '--load-url') {
             args.loadUrls.push(argv[++i] || '');
         } else if (arg === '--load-time') {
@@ -118,6 +124,34 @@ function parseArgs(argv) {
         throw new Error('--load-time must be a number >= 5');
     }
     return args;
+}
+
+function parseByteSize(raw) {
+    const value = String(raw).trim().toLowerCase();
+    const match = value.match(/^(\d+(?:\.\d+)?)(b|k|kb|kib|m|mb|mib|g|gb|gib)?$/);
+    if (!match) {
+        throw new Error('--load-bytes must be bytes or a size like 500m, 1g, 1gb, 1gib');
+    }
+
+    const amount = Number(match[1]);
+    const unit = match[2] || 'b';
+    const multiplier = {
+        b: 1,
+        k: 1024,
+        kb: 1000,
+        kib: 1024,
+        m: 1024 ** 2,
+        mb: 1000 ** 2,
+        mib: 1024 ** 2,
+        g: 1024 ** 3,
+        gb: 1000 ** 3,
+        gib: 1024 ** 3,
+    }[unit];
+    const bytes = Math.floor(amount * multiplier);
+    if (!Number.isSafeInteger(bytes) || bytes < 1) {
+        throw new Error('--load-bytes must resolve to a positive safe byte count');
+    }
+    return bytes;
 }
 
 async function readLink(input) {
