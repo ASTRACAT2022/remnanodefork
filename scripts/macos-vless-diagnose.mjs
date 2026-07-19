@@ -58,6 +58,8 @@ Options:
   --load-test        Download larger HTTPS objects through Xray to reproduce video-like drops
   --load-bytes <n>   Cloudflare load size. Supports plain bytes, 500m, 1g, 1gb, 1gib
   --load-url <url>   Load-test URL. Can repeat. Default: Cloudflare 50MB test object
+  --load-first       Run sustained load before the smaller HTTPS URL checks
+  --load-connect-timeout <sec>  TCP/TLS setup timeout for load curl. Default: 8
   --load-time <sec>  Max seconds per load-test URL. Default: 45
   --report-dir <dir> Directory for logs/report. Default: ~/Desktop/xray-vless-diagnostics-<time>
   --no-active        Do not start Xray, only parse/direct/test config
@@ -72,6 +74,8 @@ function parseArgs(argv) {
         assetDir: process.env.XRAY_LOCATION_ASSET || '',
         keepRunning: false,
         link: '',
+        loadConnectTimeout: 8,
+        loadFirst: false,
         loadTest: false,
         loadTime: 45,
         loadUrls: [],
@@ -100,6 +104,10 @@ function parseArgs(argv) {
             args.loadUrls.push(`${CLOUDFLARE_LOAD_URL}${parseByteSize(argv[++i] || '')}`);
         } else if (arg === '--load-url') {
             args.loadUrls.push(argv[++i] || '');
+        } else if (arg === '--load-first') {
+            args.loadFirst = true;
+        } else if (arg === '--load-connect-timeout') {
+            args.loadConnectTimeout = Number(argv[++i]);
         } else if (arg === '--load-time') {
             args.loadTime = Number(argv[++i]);
         } else if (arg === '--report-dir') {
@@ -122,6 +130,9 @@ function parseArgs(argv) {
     }
     if (!Number.isFinite(args.loadTime) || args.loadTime < 5) {
         throw new Error('--load-time must be a number >= 5');
+    }
+    if (!Number.isFinite(args.loadConnectTimeout) || args.loadConnectTimeout < 1) {
+        throw new Error('--load-connect-timeout must be a number >= 1');
     }
     return args;
 }
@@ -416,17 +427,25 @@ async function activeProxyChecks(xray, configPath, httpPort, urls, timeout, asse
         await waitForPort('127.0.0.1', httpPort, timeout);
         await reporter.result('pass', 'Temporary Xray started', `HTTP proxy: 127.0.0.1:${httpPort}`);
 
+        const runLoadChecks = async () => {
+            if (!loadOptions.enabled) return;
+            await reporter.section('Sustained load');
+            for (const url of loadOptions.urls) {
+                await curlLoadFetch(url, httpPort, loadOptions.seconds, loadOptions.connectTimeout, reporter);
+            }
+        };
+
+        if (loadOptions.first) {
+            await runLoadChecks();
+        }
         for (const url of urls) {
             await httpProxyFetch(url, httpPort, timeout, reporter);
         }
         for (const url of urls) {
             await curlProxyFetch(url, httpPort, timeout, reporter);
         }
-        if (loadOptions.enabled) {
-            await reporter.section('Sustained load');
-            for (const url of loadOptions.urls) {
-                await curlLoadFetch(url, httpPort, loadOptions.seconds, reporter);
-            }
+        if (!loadOptions.first) {
+            await runLoadChecks();
         }
     } catch (error) {
         await reporter.result('fail', 'Active Xray proxy check failed', error.message);
@@ -542,7 +561,7 @@ async function curlProxyFetch(rawUrl, proxyPort, timeout, reporter) {
     }
 }
 
-async function curlLoadFetch(rawUrl, proxyPort, seconds, reporter) {
+async function curlLoadFetch(rawUrl, proxyPort, seconds, connectTimeout, reporter) {
     const started = Date.now();
     const proc = await runProcess(
         '/usr/bin/curl',
@@ -552,7 +571,7 @@ async function curlLoadFetch(rawUrl, proxyPort, seconds, reporter) {
             '--proxy',
             `http://127.0.0.1:${proxyPort}`,
             '--connect-timeout',
-            '8',
+            String(connectTimeout),
             '--max-time',
             String(seconds),
             '-o',
@@ -848,6 +867,8 @@ async function main() {
             args.keepRunning,
             {
                 enabled: args.loadTest,
+                connectTimeout: args.loadConnectTimeout,
+                first: args.loadFirst,
                 seconds: args.loadTime,
                 urls: args.loadUrls,
             },
