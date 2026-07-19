@@ -12,7 +12,18 @@ RUN npm run build \
     && find dist/node_modules/@lmdb -name '*.node' ! -name 'node.napi.glibc.node' -delete
 
 
-FROM alpine:3.21 AS xray
+FROM golang:1.26.3-alpine AS xray-build
+
+WORKDIR /src/Xray-core
+
+COPY Xray-core/go.mod Xray-core/go.sum ./
+RUN go mod download
+
+COPY Xray-core ./
+RUN CGO_ENABLED=0 go build -p 1 -trimpath -ldflags="-s -w -buildid=" -o /usr/local/bin/xray ./main
+
+
+FROM alpine:3.21 AS xray-assets
 
 ARG XRAY_CORE_VERSION=v26.6.27
 ARG UPSTREAM_REPO=XTLS
@@ -43,10 +54,10 @@ WORKDIR /opt/app
 
 COPY --from=build /opt/app/dist ./dist
 
-COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
-COPY --from=xray /usr/local/share/xray/geoip.dat /usr/local/share/xray/geoip.dat
-COPY --from=xray /usr/local/share/xray/geosite.dat /usr/local/share/xray/geosite.dat
-COPY --from=xray /usr/local/share/asn /usr/local/share/asn
+COPY --from=xray-build /usr/local/bin/xray /usr/local/bin/xray
+COPY --from=xray-assets /usr/local/share/xray/geoip.dat /usr/local/share/xray/geoip.dat
+COPY --from=xray-assets /usr/local/share/xray/geosite.dat /usr/local/share/xray/geosite.dat
+COPY --from=xray-assets /usr/local/share/asn /usr/local/share/asn
 
 COPY rootfs/ /
 
