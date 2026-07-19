@@ -6,6 +6,8 @@ import (
 	"crypto/tls"
 	"math/big"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -209,9 +211,6 @@ func init() {
 }
 
 func GetFingerprint(name string) (fingerprint *utls.ClientHelloID) {
-	if name == "" {
-		name = "chrome"
-	}
 	if profile, ok := ResolveFingerprint(name); ok {
 		if profile.Selected != "" && profile.Selected != profile.Name {
 			errors.LogDebug(context.Background(), "resolved TLS fingerprint: requested=", profile.Name, " selected=", profile.Selected)
@@ -222,8 +221,121 @@ func GetFingerprint(name string) (fingerprint *utls.ClientHelloID) {
 }
 
 func ResolveFingerprint(name string) (FingerprintProfile, bool) {
-	profile, ok := fingerprintRegistry[name]
-	return profile, ok
+	normalized := NormalizeFingerprint(name)
+	if profile, ok := fingerprintRegistry[normalized]; ok {
+		return profile, true
+	}
+	if profile, ok := resolveCompatibleBrowserFingerprint(normalized); ok {
+		return profile, true
+	}
+	return FingerprintProfile{}, false
+}
+
+func NormalizeFingerprint(name string) string {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	if normalized == "" {
+		return "chrome"
+	}
+	normalized = strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(normalized)
+	for strings.Contains(normalized, "__") {
+		normalized = strings.ReplaceAll(normalized, "__", "_")
+	}
+	normalized = strings.Trim(normalized, "_")
+	normalized = strings.TrimPrefix(normalized, "utls_")
+	if strings.HasPrefix(normalized, "hello_") {
+		normalized = "hello" + strings.TrimPrefix(normalized, "hello_")
+	}
+	normalized = normalizeBrowserVersionName(normalized)
+	if alias, ok := fingerprintAliases[normalized]; ok {
+		return alias
+	}
+	return normalized
+}
+
+func normalizeBrowserVersionName(name string) string {
+	for _, browser := range []string{"chrome", "firefox", "safari", "edge", "yandex", "android", "hellochrome", "hellofirefox", "helloios", "helloedge", "hellosafari"} {
+		suffix := strings.TrimPrefix(name, browser)
+		if suffix == name || suffix == "" || strings.HasPrefix(suffix, "_") {
+			continue
+		}
+		if _, err := strconv.Atoi(suffix); err == nil {
+			return browser + "_" + suffix
+		}
+	}
+	return name
+}
+
+func resolveCompatibleBrowserFingerprint(name string) (FingerprintProfile, bool) {
+	switch {
+	case strings.HasPrefix(name, "chrome_"):
+		return compatibleChromeFingerprint(name)
+	case strings.HasPrefix(name, "hellochrome_"):
+		return compatibleHelloChromeFingerprint(name)
+	case strings.HasPrefix(name, "firefox_"):
+		return FingerprintProfile{Name: name, HelloID: &utls.HelloFirefox_120, Description: "Closest Firefox profile available in this uTLS build", Versioned: true, Selected: "firefox_120"}, true
+	case strings.HasPrefix(name, "hellofirefox_"):
+		return FingerprintProfile{Name: name, HelloID: &utls.HelloFirefox_120, Description: "Closest Firefox profile available in this uTLS build", Versioned: true, Selected: "hellofirefox_120"}, true
+	case strings.HasPrefix(name, "safari_"):
+		return FingerprintProfile{Name: name, HelloID: &utls.HelloSafari_16_0, Description: "Closest Safari profile available in this uTLS build", Versioned: true, Selected: "safari_16_0"}, true
+	case strings.HasPrefix(name, "hellosafari_"):
+		return FingerprintProfile{Name: name, HelloID: &utls.HelloSafari_16_0, Description: "Closest Safari profile available in this uTLS build", Versioned: true, Selected: "hellosafari_16_0"}, true
+	case strings.HasPrefix(name, "edge_"):
+		return FingerprintProfile{Name: name, HelloID: &utls.HelloEdge_85, Description: "Closest Edge profile available in this uTLS build", Versioned: true, Selected: "edge_85"}, true
+	case strings.HasPrefix(name, "helloedge_"):
+		return FingerprintProfile{Name: name, HelloID: &utls.HelloEdge_85, Description: "Closest Edge profile available in this uTLS build", Versioned: true, Selected: "helloedge_85"}, true
+	case strings.HasPrefix(name, "yandex_"):
+		return FingerprintProfile{Name: name, HelloID: &chromeAutoFingerprint, Description: "Yandex Browser uses the closest supported Chromium profile", Versioned: true, Selected: "chrome_133"}, true
+	case strings.HasPrefix(name, "android_"):
+		return FingerprintProfile{Name: name, HelloID: &utls.HelloAndroid_11_OkHttp, Description: "Closest Android profile available in this uTLS build", Versioned: true, Selected: "android"}, true
+	default:
+		return FingerprintProfile{}, false
+	}
+}
+
+func compatibleHelloChromeFingerprint(name string) (FingerprintProfile, bool) {
+	version, ok := versionSuffix(name, "hellochrome_")
+	if !ok {
+		return FingerprintProfile{}, false
+	}
+	selected := "hellochrome_133"
+	helloID := &utls.HelloChrome_133
+	if version <= 126 {
+		selected = "hellochrome_120"
+		helloID = &utls.HelloChrome_120
+	} else if version <= 132 {
+		selected = "hellochrome_131"
+		helloID = &utls.HelloChrome_131
+	}
+	return FingerprintProfile{Name: name, HelloID: helloID, Description: "Closest legacy Chrome profile available in this uTLS build", Versioned: true, Selected: selected}, true
+}
+
+func compatibleChromeFingerprint(name string) (FingerprintProfile, bool) {
+	version, ok := versionSuffix(name, "chrome_")
+	if !ok {
+		return FingerprintProfile{}, false
+	}
+	selected := "chrome_133"
+	helloID := &utls.HelloChrome_133
+	if version <= 126 {
+		selected = "chrome_120"
+		helloID = &utls.HelloChrome_120
+	} else if version <= 132 {
+		selected = "chrome_131"
+		helloID = &utls.HelloChrome_131
+	}
+	return FingerprintProfile{Name: name, HelloID: helloID, Description: "Closest Chrome profile available in this uTLS build", Versioned: true, Selected: selected}, true
+}
+
+func versionSuffix(name string, prefix string) (int, bool) {
+	suffix := strings.TrimPrefix(name, prefix)
+	if suffix == name || suffix == "" {
+		return 0, false
+	}
+	if idx := strings.IndexByte(suffix, '_'); idx >= 0 {
+		suffix = suffix[:idx]
+	}
+	version, err := strconv.Atoi(suffix)
+	return version, err == nil
 }
 
 var randomFingerprintPool = []FingerprintProfile{
@@ -323,4 +435,24 @@ var fingerprintRegistry = map[string]FingerprintProfile{
 	"hellochrome_115_pq":               {Name: "hellochrome_115_pq", HelloID: &utls.HelloChrome_115_PQ, Description: "Chrome 115 PQ beta"},
 	"hellochrome_115_pq_psk":           {Name: "hellochrome_115_pq_psk", HelloID: &utls.HelloChrome_115_PQ_PSK, Description: "Chrome 115 PQ PSK beta"},
 	"hellochrome_120_pq":               {Name: "hellochrome_120_pq", HelloID: &utls.HelloChrome_120_PQ, Description: "Chrome 120 PQ beta"},
+}
+
+var fingerprintAliases = map[string]string{
+	"brave":           "chrome",
+	"brave_browser":   "chrome",
+	"chromium":        "chrome",
+	"google_chrome":   "chrome",
+	"opera":           "chrome",
+	"opera_browser":   "chrome",
+	"vivaldi":         "chrome",
+	"vivaldi_browser": "chrome",
+	"ya_browser":      "yandex",
+	"yabrowser":       "yandex",
+	"yandex_browser":  "yandex",
+	"yandexbrowser":   "yandex",
+	"qqbrowser":       "qq",
+	"qq_browser":      "qq",
+	"360browser":      "360",
+	"360_browser":     "360",
+	"android_11":      "android",
 }

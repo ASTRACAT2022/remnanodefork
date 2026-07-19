@@ -42,6 +42,24 @@ The previous pseudo-version was removed from `go.mod` and `go.sum`.
 
 Legacy `hello*` uTLS names are still accepted for compatibility with existing configs.
 
+## Vanilla Client Compatibility
+
+Clients do not need new link parameters for this fork. Standard values such as
+`fp=chrome` continue to work and resolve to the best Chromium profile bundled with
+the pinned uTLS version.
+
+The resolver also normalizes common GUI/export variants before validation:
+
+- case, spaces, dots, and dashes: `Chrome-133`, `chrome 133`, `chrome.133`
+- compact legacy names: `HelloChrome133`
+- explicit legacy names: `hello-chrome-133`
+- Chromium-family aliases: `brave`, `chromium`, `google chrome`, `opera`, `vivaldi`
+- Yandex aliases: `yandex`, `yandex-browser`, `YaBrowser`
+
+Future browser version labels are mapped to the closest supported profile available
+in this build instead of forcing users to edit imported links. For example,
+`chrome_134` currently resolves to `chrome_133`.
+
 ## Behavior
 
 `chrome_auto`, `firefox_auto`, and `safari_auto` are process-stable aliases to the

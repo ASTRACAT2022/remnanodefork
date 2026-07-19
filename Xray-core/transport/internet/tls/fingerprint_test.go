@@ -52,13 +52,86 @@ func TestVersionedFingerprintAliases(t *testing.T) {
 }
 
 func TestYandexFingerprintAliasesChromeAuto(t *testing.T) {
-	for _, name := range []string{"yandex", "yandex_auto", "helloyandex_auto"} {
+	for _, name := range []string{"yandex", "yandex_auto", "helloyandex_auto", "Yandex-Browser", "YaBrowser"} {
 		fingerprint := GetFingerprint(name)
 		if fingerprint == nil {
 			t.Fatalf("GetFingerprint(%q) returned nil", name)
 		}
 		if *fingerprint != utls.HelloChrome_Auto {
 			t.Fatalf("GetFingerprint(%q) = %v, want %v", name, fingerprint.Str(), utls.HelloChrome_Auto.Str())
+		}
+	}
+}
+
+func TestFingerprintNormalizationForVanillaClients(t *testing.T) {
+	tests := []struct {
+		name       string
+		normalized string
+		want       utls.ClientHelloID
+		selected   string
+	}{
+		{name: "", normalized: "chrome", want: utls.HelloChrome_Auto, selected: "chrome_133"},
+		{name: "Chrome", normalized: "chrome", want: utls.HelloChrome_Auto, selected: "chrome_133"},
+		{name: "chrome-133", normalized: "chrome_133", want: utls.HelloChrome_133},
+		{name: "HelloChrome133", normalized: "hellochrome_133", want: utls.HelloChrome_133},
+		{name: "hello-chrome-133", normalized: "hellochrome_133", want: utls.HelloChrome_133},
+		{name: "brave", normalized: "chrome", want: utls.HelloChrome_Auto, selected: "chrome_133"},
+		{name: "google chrome", normalized: "chrome", want: utls.HelloChrome_Auto, selected: "chrome_133"},
+	}
+
+	for _, test := range tests {
+		if normalized := NormalizeFingerprint(test.name); normalized != test.normalized {
+			t.Fatalf("NormalizeFingerprint(%q) = %q, want %q", test.name, normalized, test.normalized)
+		}
+		fingerprint := GetFingerprint(test.name)
+		if fingerprint == nil {
+			t.Fatalf("GetFingerprint(%q) returned nil", test.name)
+		}
+		if *fingerprint != test.want {
+			t.Fatalf("GetFingerprint(%q) = %v, want %v", test.name, fingerprint.Str(), test.want.Str())
+		}
+		profile, ok := ResolveFingerprint(test.name)
+		if !ok {
+			t.Fatalf("ResolveFingerprint(%q) returned false", test.name)
+		}
+		if profile.Selected != test.selected {
+			t.Fatalf("ResolveFingerprint(%q).Selected = %q, want %q", test.name, profile.Selected, test.selected)
+		}
+	}
+}
+
+func TestCompatibleFutureBrowserVersionFallbacks(t *testing.T) {
+	tests := []struct {
+		name     string
+		want     utls.ClientHelloID
+		selected string
+	}{
+		{name: "chrome_134", want: utls.HelloChrome_133, selected: "chrome_133"},
+		{name: "chrome999", want: utls.HelloChrome_133, selected: "chrome_133"},
+		{name: "HelloChrome140", want: utls.HelloChrome_133, selected: "hellochrome_133"},
+		{name: "firefox_130", want: utls.HelloFirefox_120, selected: "firefox_120"},
+		{name: "HelloFirefox130", want: utls.HelloFirefox_120, selected: "hellofirefox_120"},
+		{name: "safari_17_0", want: utls.HelloSafari_16_0, selected: "safari_16_0"},
+		{name: "HelloSafari170", want: utls.HelloSafari_16_0, selected: "hellosafari_16_0"},
+		{name: "edge_130", want: utls.HelloEdge_85, selected: "edge_85"},
+		{name: "HelloEdge130", want: utls.HelloEdge_85, selected: "helloedge_85"},
+		{name: "android_14", want: utls.HelloAndroid_11_OkHttp, selected: "android"},
+	}
+
+	for _, test := range tests {
+		fingerprint := GetFingerprint(test.name)
+		if fingerprint == nil {
+			t.Fatalf("GetFingerprint(%q) returned nil", test.name)
+		}
+		if *fingerprint != test.want {
+			t.Fatalf("GetFingerprint(%q) = %v, want %v", test.name, fingerprint.Str(), test.want.Str())
+		}
+		profile, ok := ResolveFingerprint(test.name)
+		if !ok {
+			t.Fatalf("ResolveFingerprint(%q) returned false", test.name)
+		}
+		if profile.Selected != test.selected {
+			t.Fatalf("ResolveFingerprint(%q).Selected = %q, want %q", test.name, profile.Selected, test.selected)
 		}
 	}
 }
@@ -109,10 +182,10 @@ func TestRandomizedFingerprintIsProcessStable(t *testing.T) {
 }
 
 func TestUnknownFingerprint(t *testing.T) {
-	if fingerprint := GetFingerprint("chrome999"); fingerprint != nil {
-		t.Fatalf("GetFingerprint(\"chrome999\") = %v, want nil", fingerprint.Str())
+	if fingerprint := GetFingerprint("netscape999"); fingerprint != nil {
+		t.Fatalf("GetFingerprint(\"netscape999\") = %v, want nil", fingerprint.Str())
 	}
-	if _, ok := ResolveFingerprint("chrome999"); ok {
-		t.Fatal("ResolveFingerprint(\"chrome999\") returned true")
+	if _, ok := ResolveFingerprint("netscape999"); ok {
+		t.Fatal("ResolveFingerprint(\"netscape999\") returned true")
 	}
 }
