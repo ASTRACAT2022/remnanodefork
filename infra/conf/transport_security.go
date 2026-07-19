@@ -177,7 +177,7 @@ func (c *REALITYConfig) Build() (proto.Message, error) {
 		config.LimitFallbackDownload.BytesPerSec = c.LimitFallbackDownload.BytesPerSec
 		config.LimitFallbackDownload.BurstBytesPerSec = c.LimitFallbackDownload.BurstBytesPerSec
 	} else {
-		config.Fingerprint = strings.ToLower(c.Fingerprint)
+		config.Fingerprint = tls.NormalizeFingerprint(c.Fingerprint)
 		if config.Fingerprint == "unsafe" || config.Fingerprint == "hellogolang" {
 			return nil, errors.New(`invalid "fingerprint": `, config.Fingerprint)
 		}
@@ -351,7 +351,7 @@ func (c *TLSConfig) Build() (proto.Message, error) {
 	config.MinVersion = c.MinVersion
 	config.MaxVersion = c.MaxVersion
 	config.CipherSuites = c.CipherSuites
-	config.Fingerprint = strings.ToLower(c.Fingerprint)
+	config.Fingerprint = tls.NormalizeFingerprint(c.Fingerprint)
 	if config.Fingerprint != "unsafe" && tls.GetFingerprint(config.Fingerprint) == nil {
 		return nil, errors.New(`unknown "fingerprint": `, config.Fingerprint)
 	}
