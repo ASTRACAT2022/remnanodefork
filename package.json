@@ -24,6 +24,7 @@
     "start:dev": "NODE_ENV=development nest start --watch",
     "start:debug": "NODE_ENV=development nest start --debug --watch",
     "start:prod": "NODE_ENV=production node --max-http-header-size=65536 dist/main",
+    "diagnose:xray-config": "node scripts/xray-config-tester.mjs",
     "format": "oxfmt --check",
     "format:fix": "oxfmt",
     "lint": "oxlint",
