@@ -62,6 +62,9 @@ Options:
   --load-repeat <n>  Repeat each load-test URL. Default: 1
   --load-connect-timeout <sec>  TCP/TLS setup timeout for load curl. Default: 8
   --load-time <sec>  Max seconds per load-test URL. Default: 45
+  --reality-handshake-max <n>        Max REALITY handshakes per window for patched Xray
+  --reality-handshake-window-ms <ms> REALITY handshake limiter window for patched Xray
+  --reality-handshake-min-ms <ms>    Min delay between REALITY handshakes for patched Xray
   --report-dir <dir> Directory for logs/report. Default: ~/Desktop/xray-vless-diagnostics-<time>
   --no-active        Do not start Xray, only parse/direct/test config
   --keep-running     Keep temporary Xray running after active checks
@@ -82,6 +85,9 @@ function parseArgs(argv) {
         loadTime: 45,
         loadUrls: [],
         reportDir: '',
+        realityHandshakeMax: 0,
+        realityHandshakeMinMs: 0,
+        realityHandshakeWindowMs: 0,
         timeout: 8000,
         urls: [],
         xray: process.env.XRAY_BIN || '',
@@ -114,6 +120,12 @@ function parseArgs(argv) {
             args.loadConnectTimeout = Number(argv[++i]);
         } else if (arg === '--load-time') {
             args.loadTime = Number(argv[++i]);
+        } else if (arg === '--reality-handshake-max') {
+            args.realityHandshakeMax = Number(argv[++i]);
+        } else if (arg === '--reality-handshake-window-ms') {
+            args.realityHandshakeWindowMs = Number(argv[++i]);
+        } else if (arg === '--reality-handshake-min-ms') {
+            args.realityHandshakeMinMs = Number(argv[++i]);
         } else if (arg === '--report-dir') {
             args.reportDir = argv[++i] || '';
         } else if (arg === '--no-active') {
@@ -140,6 +152,15 @@ function parseArgs(argv) {
     }
     if (!Number.isInteger(args.loadRepeat) || args.loadRepeat < 1) {
         throw new Error('--load-repeat must be an integer >= 1');
+    }
+    for (const [name, value] of [
+        ['--reality-handshake-max', args.realityHandshakeMax],
+        ['--reality-handshake-window-ms', args.realityHandshakeWindowMs],
+        ['--reality-handshake-min-ms', args.realityHandshakeMinMs],
+    ]) {
+        if (!Number.isInteger(value) || value < 0) {
+            throw new Error(`${name} must be an integer >= 0`);
+        }
     }
     return args;
 }
@@ -400,8 +421,8 @@ async function directNetworkChecks(link, timeout, reporter) {
     }
 }
 
-async function runXrayConfigTest(xray, configPath, timeout, assetDir, reporter) {
-    const proc = await runProcess(xray, ['run', '-test', '-config', configPath], timeout, assetEnv(assetDir)).catch((error) => ({
+async function runXrayConfigTest(xray, configPath, timeout, xrayEnv, reporter) {
+    const proc = await runProcess(xray, ['run', '-test', '-config', configPath], timeout, xrayEnv).catch((error) => ({
         code: -1,
         stderr: error.message,
         stdout: '',
@@ -414,14 +435,14 @@ async function runXrayConfigTest(xray, configPath, timeout, assetDir, reporter) 
     }
 }
 
-async function activeProxyChecks(xray, configPath, httpPort, urls, timeout, assetDir, keepRunning, loadOptions, reporter) {
+async function activeProxyChecks(xray, configPath, httpPort, urls, timeout, xrayEnv, keepRunning, loadOptions, reporter) {
     let proc;
     let stdout = '';
     let stderr = '';
 
     try {
         proc = spawn(xray, ['run', '-config', configPath], {
-            env: assetEnv(assetDir),
+            env: xrayEnv,
             stdio: ['ignore', 'pipe', 'pipe'],
         });
         proc.stdout.on('data', (chunk) => {
@@ -786,8 +807,13 @@ async function findXray(preferred) {
     throw new Error(`Xray binary not found. Use --xray /path/to/xray`);
 }
 
-function assetEnv(assetDir) {
-    return assetDir ? { ...process.env, XRAY_LOCATION_ASSET: path.resolve(assetDir) } : process.env;
+function buildXrayEnv(args) {
+    const env = { ...process.env };
+    if (args.assetDir) env.XRAY_LOCATION_ASSET = path.resolve(args.assetDir);
+    if (args.realityHandshakeMax > 0) env.XRAY_REALITY_HANDSHAKE_MAX_PER_WINDOW = String(args.realityHandshakeMax);
+    if (args.realityHandshakeWindowMs > 0) env.XRAY_REALITY_HANDSHAKE_WINDOW_MS = String(args.realityHandshakeWindowMs);
+    if (args.realityHandshakeMinMs > 0) env.XRAY_REALITY_HANDSHAKE_MIN_INTERVAL_MS = String(args.realityHandshakeMinMs);
+    return env;
 }
 
 function summarizeOutput(stdout, stderr) {
@@ -855,6 +881,7 @@ async function main() {
     const socksPort = args.active ? await pickPort() : randomLocalPort(httpPort);
     const config = buildXrayConfig(link, httpPort, socksPort, reportDir);
     const configPath = path.join(reportDir, 'generated-xray-config.json');
+    const xrayEnv = buildXrayEnv(args);
     await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
     await fs.writeFile(path.join(reportDir, 'parsed-vless.json'), `${JSON.stringify({ ...link, raw: '[redacted]' }, null, 2)}\n`);
 
@@ -865,7 +892,7 @@ async function main() {
     await directNetworkChecks(link, args.timeout, reporter);
 
     await reporter.section('Xray config validation');
-    await runXrayConfigTest(xray.path, configPath, args.timeout, args.assetDir, reporter);
+    await runXrayConfigTest(xray.path, configPath, args.timeout, xrayEnv, reporter);
 
     if (args.active) {
         await reporter.section('Active proxy');
@@ -875,7 +902,7 @@ async function main() {
             httpPort,
             args.urls,
             args.timeout,
-            args.assetDir,
+            xrayEnv,
             args.keepRunning,
             {
                 enabled: args.loadTest,

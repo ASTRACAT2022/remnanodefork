@@ -17,6 +17,9 @@ const (
 	UseFreedomSplice         = "xray.buf.splice"
 	UseVmessPadding          = "xray.vmess.padding"
 	UseVlessVisionDirectCopy = "xray.vless.vision.direct_copy"
+	UseRealityHandshakeMax   = "xray.reality.handshake.max_per_window"
+	UseRealityHandshakeMinMS = "xray.reality.handshake.min_interval_ms"
+	UseRealityHandshakeWinMS = "xray.reality.handshake.window_ms"
 	UseCone                  = "xray.cone.disabled"
 	UseStrictJSON            = "xray.json.strict"
 
