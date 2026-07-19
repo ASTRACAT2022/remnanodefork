@@ -79,3 +79,16 @@ TLS ClientHello fingerprinting does not make the upper protocol look like a brow
 For example, ALPN and HTTP/2 behavior still need to match the transport actually in
 use. A JA3-like value is only one view of ClientHello and does not describe all TLS
 extensions, extension contents, record behavior, or application traffic.
+
+## TCP REALITY Vision Under DPI
+
+This fork also supports disabling VLESS Vision direct-copy with:
+
+```text
+XRAY_VLESS_VISION_DIRECT_COPY=false
+```
+
+Direct-copy is faster, but after the first TLS records it turns Vision traffic into
+a long raw TCP copy path. Some DPI deployments allow the REALITY handshake and then
+kill sustained video-like streams. Disabling direct-copy keeps Vision on its padded
+copy path for the whole connection. Client links do not need to change.

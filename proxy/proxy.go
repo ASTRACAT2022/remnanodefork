@@ -20,6 +20,7 @@ import (
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/platform"
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/common/signal"
@@ -39,6 +40,7 @@ var (
 	TlsClientHandShakeStart = []byte{0x16, 0x03}
 	TlsServerHandShakeStart = []byte{0x16, 0x03, 0x03}
 	TlsApplicationDataStart = []byte{0x17, 0x03, 0x03}
+	vlessVisionDirectCopy   = parseVisionDirectCopyFlag()
 
 	Tls13CipherSuiteDic = map[uint16]string{
 		0x1301: "TLS_AES_128_GCM_SHA256",
@@ -319,6 +321,22 @@ func NewVisionWriter(writer buf.Writer, trafficState *TrafficState, isUplink boo
 	}
 }
 
+func parseVisionDirectCopyFlag() bool {
+	value := platform.NewEnvFlag(platform.UseVlessVisionDirectCopy).GetValue(func() string {
+		return "true"
+	})
+	switch value {
+	case "0", "false", "False", "FALSE", "no", "No", "NO", "off", "Off", "OFF", "disabled", "Disabled", "DISABLED":
+		return false
+	default:
+		return true
+	}
+}
+
+func visionDirectCopyEnabled() bool {
+	return vlessVisionDirectCopy
+}
+
 func (w *VisionWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 	var isPadding *bool
 	var switchToDirectCopy *bool
@@ -362,19 +380,24 @@ func (w *VisionWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 			longPadding := w.trafficState.IsTLS
 			for i, b := range mb {
 				if w.trafficState.IsTLS && b.Len() >= 6 && bytes.Equal(TlsApplicationDataStart, b.BytesTo(3)) && isComplete {
-					if w.trafficState.EnableXtls {
+					useDirectCopy := w.trafficState.EnableXtls && visionDirectCopyEnabled()
+					keepVisionPadding := w.trafficState.EnableXtls && !useDirectCopy
+					if useDirectCopy {
 						*switchToDirectCopy = true
 					}
 					var command byte = CommandPaddingContinue
 					if i == len(mb)-1 {
-						command = CommandPaddingEnd
-						if w.trafficState.EnableXtls {
+						if useDirectCopy {
 							command = CommandPaddingDirect
+						} else if !keepVisionPadding {
+							command = CommandPaddingEnd
 						}
 					}
 					mb[i] = XtlsPadding(b, command, &w.writeOnceUserUUID, true, w.ctx, w.testseed)
-					*isPadding = false // padding going to end
-					longPadding = false
+					if !keepVisionPadding {
+						*isPadding = false // padding going to end
+						longPadding = false
+					}
 					continue
 				} else if !w.trafficState.IsTLS12orAbove && w.trafficState.NumberOfPacketToFilter <= 1 { // For compatibility with earlier vision receiver, we finish padding 1 packet early
 					*isPadding = false
@@ -384,7 +407,7 @@ func (w *VisionWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 				var command byte = CommandPaddingContinue
 				if i == len(mb)-1 && !*isPadding {
 					command = CommandPaddingEnd
-					if w.trafficState.EnableXtls {
+					if w.trafficState.EnableXtls && visionDirectCopyEnabled() {
 						command = CommandPaddingDirect
 					}
 				}
