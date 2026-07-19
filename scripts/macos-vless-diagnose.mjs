@@ -59,6 +59,7 @@ Options:
   --load-bytes <n>   Cloudflare load size. Supports plain bytes, 500m, 1g, 1gb, 1gib
   --load-url <url>   Load-test URL. Can repeat. Default: Cloudflare 50MB test object
   --load-first       Run sustained load before the smaller HTTPS URL checks
+  --load-repeat <n>  Repeat each load-test URL. Default: 1
   --load-connect-timeout <sec>  TCP/TLS setup timeout for load curl. Default: 8
   --load-time <sec>  Max seconds per load-test URL. Default: 45
   --report-dir <dir> Directory for logs/report. Default: ~/Desktop/xray-vless-diagnostics-<time>
@@ -76,6 +77,7 @@ function parseArgs(argv) {
         link: '',
         loadConnectTimeout: 8,
         loadFirst: false,
+        loadRepeat: 1,
         loadTest: false,
         loadTime: 45,
         loadUrls: [],
@@ -106,6 +108,8 @@ function parseArgs(argv) {
             args.loadUrls.push(argv[++i] || '');
         } else if (arg === '--load-first') {
             args.loadFirst = true;
+        } else if (arg === '--load-repeat') {
+            args.loadRepeat = Number(argv[++i]);
         } else if (arg === '--load-connect-timeout') {
             args.loadConnectTimeout = Number(argv[++i]);
         } else if (arg === '--load-time') {
@@ -133,6 +137,9 @@ function parseArgs(argv) {
     }
     if (!Number.isFinite(args.loadConnectTimeout) || args.loadConnectTimeout < 1) {
         throw new Error('--load-connect-timeout must be a number >= 1');
+    }
+    if (!Number.isInteger(args.loadRepeat) || args.loadRepeat < 1) {
+        throw new Error('--load-repeat must be an integer >= 1');
     }
     return args;
 }
@@ -430,8 +437,13 @@ async function activeProxyChecks(xray, configPath, httpPort, urls, timeout, asse
         const runLoadChecks = async () => {
             if (!loadOptions.enabled) return;
             await reporter.section('Sustained load');
-            for (const url of loadOptions.urls) {
-                await curlLoadFetch(url, httpPort, loadOptions.seconds, loadOptions.connectTimeout, reporter);
+            for (let repeat = 1; repeat <= loadOptions.repeat; repeat += 1) {
+                if (loadOptions.repeat > 1) {
+                    await reporter.result('info', 'Load iteration', `${repeat}/${loadOptions.repeat}`);
+                }
+                for (const url of loadOptions.urls) {
+                    await curlLoadFetch(url, httpPort, loadOptions.seconds, loadOptions.connectTimeout, reporter);
+                }
             }
         };
 
@@ -869,6 +881,7 @@ async function main() {
                 enabled: args.loadTest,
                 connectTimeout: args.loadConnectTimeout,
                 first: args.loadFirst,
+                repeat: args.loadRepeat,
                 seconds: args.loadTime,
                 urls: args.loadUrls,
             },
