@@ -14,6 +14,10 @@ const DEFAULT_URLS = [
     'https://www.google.com/generate_204',
 ];
 
+const DEFAULT_LOAD_URLS = [
+    'https://speed.cloudflare.com/__down?bytes=50000000',
+];
+
 const SUPPORTED_FINGERPRINTS = new Set([
     'chrome',
     'chrome_auto',
@@ -49,6 +53,9 @@ Options:
   --asset-dir <dir>  Xray asset dir. Sets XRAY_LOCATION_ASSET for Xray
   --url <url>        HTTPS URL to test through proxy. Can repeat
   --timeout <ms>     Timeout per check. Default: 8000
+  --load-test        Download larger HTTPS objects through Xray to reproduce video-like drops
+  --load-url <url>   Load-test URL. Can repeat. Default: Cloudflare 50MB test object
+  --load-time <sec>  Max seconds per load-test URL. Default: 45
   --report-dir <dir> Directory for logs/report. Default: ~/Desktop/xray-vless-diagnostics-<time>
   --no-active        Do not start Xray, only parse/direct/test config
   --keep-running     Keep temporary Xray running after active checks
@@ -62,6 +69,9 @@ function parseArgs(argv) {
         assetDir: process.env.XRAY_LOCATION_ASSET || '',
         keepRunning: false,
         link: '',
+        loadTest: false,
+        loadTime: 45,
+        loadUrls: [],
         reportDir: '',
         timeout: 8000,
         urls: [],
@@ -80,6 +90,12 @@ function parseArgs(argv) {
             args.urls.push(argv[++i] || '');
         } else if (arg === '--timeout') {
             args.timeout = Number(argv[++i]);
+        } else if (arg === '--load-test') {
+            args.loadTest = true;
+        } else if (arg === '--load-url') {
+            args.loadUrls.push(argv[++i] || '');
+        } else if (arg === '--load-time') {
+            args.loadTime = Number(argv[++i]);
         } else if (arg === '--report-dir') {
             args.reportDir = argv[++i] || '';
         } else if (arg === '--no-active') {
@@ -94,8 +110,12 @@ function parseArgs(argv) {
     }
 
     if (!args.urls.length) args.urls = DEFAULT_URLS;
+    if (!args.loadUrls.length) args.loadUrls = DEFAULT_LOAD_URLS;
     if (!Number.isFinite(args.timeout) || args.timeout < 1000) {
         throw new Error('--timeout must be a number >= 1000');
+    }
+    if (!Number.isFinite(args.loadTime) || args.loadTime < 5) {
+        throw new Error('--load-time must be a number >= 5');
     }
     return args;
 }
@@ -342,7 +362,7 @@ async function runXrayConfigTest(xray, configPath, timeout, assetDir, reporter) 
     }
 }
 
-async function activeProxyChecks(xray, configPath, httpPort, urls, timeout, assetDir, keepRunning, reporter) {
+async function activeProxyChecks(xray, configPath, httpPort, urls, timeout, assetDir, keepRunning, loadOptions, reporter) {
     let proc;
     let stdout = '';
     let stderr = '';
@@ -367,6 +387,12 @@ async function activeProxyChecks(xray, configPath, httpPort, urls, timeout, asse
         }
         for (const url of urls) {
             await curlProxyFetch(url, httpPort, timeout, reporter);
+        }
+        if (loadOptions.enabled) {
+            await reporter.section('Sustained load');
+            for (const url of loadOptions.urls) {
+                await curlLoadFetch(url, httpPort, loadOptions.seconds, reporter);
+            }
         }
     } catch (error) {
         await reporter.result('fail', 'Active Xray proxy check failed', error.message);
@@ -479,6 +505,40 @@ async function curlProxyFetch(rawUrl, proxyPort, timeout, reporter) {
         await reporter.result('pass', 'curl proxy HTTPS request succeeded', `${rawUrl} -> ${output} in ${Date.now() - started}ms`);
     } else {
         await reporter.result('fail', `curl proxy HTTPS request failed with code ${proc.code}`, `${rawUrl}: ${output}`);
+    }
+}
+
+async function curlLoadFetch(rawUrl, proxyPort, seconds, reporter) {
+    const started = Date.now();
+    const proc = await runProcess(
+        '/usr/bin/curl',
+        [
+            '-L',
+            '-sS',
+            '--proxy',
+            `http://127.0.0.1:${proxyPort}`,
+            '--connect-timeout',
+            '8',
+            '--max-time',
+            String(seconds),
+            '-o',
+            '/dev/null',
+            '-w',
+            'http_code=%{http_code} size_download=%{size_download} speed_download=%{speed_download} time_connect=%{time_connect} time_appconnect=%{time_appconnect} time_starttransfer=%{time_starttransfer} time_total=%{time_total} remote_ip=%{remote_ip}',
+            rawUrl,
+        ],
+        seconds * 1000 + 2000,
+    ).catch((error) => ({
+        code: -1,
+        stderr: error.message,
+        stdout: '',
+    }));
+
+    const output = summarizeOutput(proc.stdout, proc.stderr);
+    if (proc.code === 0 && /http_code=(2|3)\d\d/.test(proc.stdout)) {
+        await reporter.result('pass', 'Sustained proxy download succeeded', `${rawUrl} -> ${output}; wall=${Date.now() - started}ms`);
+    } else {
+        await reporter.result('fail', `Sustained proxy download failed with code ${proc.code}`, `${rawUrl}: ${output}; wall=${Date.now() - started}ms`);
     }
 }
 
@@ -744,7 +804,21 @@ async function main() {
 
     if (args.active) {
         await reporter.section('Active proxy');
-        await activeProxyChecks(xray.path, configPath, httpPort, args.urls, args.timeout, args.assetDir, args.keepRunning, reporter);
+        await activeProxyChecks(
+            xray.path,
+            configPath,
+            httpPort,
+            args.urls,
+            args.timeout,
+            args.assetDir,
+            args.keepRunning,
+            {
+                enabled: args.loadTest,
+                seconds: args.loadTime,
+                urls: args.loadUrls,
+            },
+            reporter,
+        );
     }
 
     await reporter.section('Summary');
