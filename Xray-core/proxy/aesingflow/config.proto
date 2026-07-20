@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package xray.proxy.aesingflow;
+option csharp_namespace = "Xray.Proxy.Aesingflow";
+option go_package = "github.com/xtls/xray-core/proxy/aesingflow";
+option java_package = "com.xray.proxy.aesingflow";
+option java_multiple_files = true;
+
+message Config {
+  string server = 1;
+  uint32 server_port = 2;
+  string token = 3;
+  string server_name = 4;
+  string ca_file = 5;
+  uint32 max_streams = 6;
+  uint64 brutal_bps = 7;
+  bool disable_brutal = 8;
+  bool brutal_disable_loss_compensation = 9;
+}

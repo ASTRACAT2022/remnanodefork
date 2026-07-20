@@ -17,6 +17,8 @@ FROM golang:1.26.3-alpine AS xray-build
 WORKDIR /src/Xray-core
 
 COPY Xray-core/go.mod Xray-core/go.sum ./
+COPY Xray-core/third_party/aesingflow/go.mod ./third_party/aesingflow/go.mod
+COPY Xray-core/third_party/aesingflow/third_party/quic-go/go.mod ./third_party/aesingflow/third_party/quic-go/go.mod
 RUN go mod download
 
 COPY Xray-core ./

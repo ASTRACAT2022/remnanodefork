@@ -1,0 +1,5 @@
+This directory vendors quic-go under its MIT License (see LICENSE).
+
+The AesingFlow Brutal congestion-controller implementation in
+internal/congestion/brutal_sender.go is adapted from Hysteria, also released
+under the MIT License: https://github.com/apernet/hysteria
